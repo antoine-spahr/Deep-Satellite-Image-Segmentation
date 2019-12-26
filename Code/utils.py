@@ -138,39 +138,87 @@ def get_polygon_dict(img_id, class_dict, img_size, wkt_df, grid_df):
 
 def load_image(filepath, img_id):
     """
-
+    Load the image associated with the id provided.
     ------------
     INPUT
-        |---- filepath
-        |---- img_id
+        |---- filepath (str) the path to the sixteen bands images
+        |---- img_id (str) the id of the image to load
     OUTPUT
-        |---- polygon_list
+        |---- img_A (3D numpy array) the SWIR bands 
+        |---- img_M (3D numpy array) the Multispectral bands
+        |---- img_P (2D numpy array) the Panchromatic band
     """
     img_M = skimage.img_as_float(skimage.io.imread(filepath+img_id+'_M.tif', plugin="tifffile"))
     img_A = skimage.img_as_float(skimage.io.imread(filepath+img_id+'_A.tif', plugin="tifffile"))
     img_P = skimage.img_as_float(skimage.io.imread(filepath+img_id+'_P.tif', plugin="tifffile"))
 
-    return img_A, img_M, img_P
+    return np.moveaxis(img_A, 0, 2), np.moveaxis(img_M, 0, 2), img_P
 
 def contrast_stretch(img, percentile=(0.5,99.5), out_range=(0,1)):
     """
-
+    Stretch the image histogram for each channel independantly. The image histogram
+    is streched such that the lower and upper percentile are saturated.
     ------------
     INPUT
-        |---- filepath
-        |---- img_id
+        |---- img (3D numpy array) the image to stretch (H x W x B)
+        |---- percentile (tuple) the two percentile value to saturate
+        |---- out_range (tuple) the output range value
     OUTPUT
-        |---- polygon_list
+        |---- img_adj (3D numpy array) the streched image (H x W x B)
     """
-    n_band = img.shape[0]
-    q = [tuple(np.percentile(img[i,:,:], [0,99.5])) for i in range(n_band)]
-    img = np.stack([skimage.exposure.rescale_intensity(img[i,:,:], in_range=q[i], out_range=out_range) for i in range(n_band)], axis=0)
-    return img
+    n_band = img.shape[2]
+    q = [tuple(np.percentile(img[:,:,i], [0,99.5])) for i in range(n_band)]
+    img_adj = np.stack([skimage.exposure.rescale_intensity(img[:,:,i], in_range=q[i], out_range=out_range) for i in range(n_band)], axis=2)
+    return img_adj
 
-# upsample image
+def pansharpen(img_MS, img_Pan, order=2, W=1.5, stretch_perc=(0.5,99.5)):
+    """
+    Perform an image fusion of the multispectral image using the panchromatic one.
+    The image is fisrt upsampled and interpolated. Then the panchromatic image is
+    summed. And the image histogram is stretched.
+    ------------
+    INPUT
+        |---- img_MS (3D numpy.array) the multispectral data as H x W x B
+        |---- img_Pan (2D numpy.array) the Panchromatic data
+        |---- order (int) the interpolation method to use (according to the scikit image method resize)
+        |---- W (float) the weight of the summed panchromatic
+    OUTPUT
+        |---- img_fused (3D numpy.array) the pansharpened multispectral data as H x W x B
+    """
+    m_up = skimage.transform.resize(img_MS, img_Pan.shape, order=order)
+    img_fused = np.multiply(m_up, W*np.expand_dims(img_Pan, axis=2))
+    img_fused = contrast_stretch(img_fused, stretch_perc)
+    return img_fused
 
-# Image fusion
+def NDVI(R, NIR):
+    """
+    Compute the NDVI from the red and near infrared bands. Note that this
+    function can be used to compute the NDWI by calling it with NDVI(NIR, G).
+    ------------
+    INPUT
+        |---- R (2D numpy.array) the red band
+        |---- NIR (2D numpy.array) the near infrared band
+    OUTPUT
+        |---- NDVI (2D numpy.array) the NDVI
+    """
+    return (NIR - R)/(NIR + R + 1e-9)
 
-# indexes (NDVI, SAVI, ...)
+def EVI(R, NIR, B):
+    """
+    Compute the Enhenced Vegetation index from the red, near infrared bands and
+    blue band.
+    ------------
+    INPUT
+        |---- R (2D numpy.array) the red band
+        |---- NIR (2D numpy.array) the near infrared band
+        |---- B (2D numpy.array) the blue band
+    OUTPUT
+        |---- evi (2D numpy.array) the EVI
+    """
+    L, C1, C2 = 1.0, 6.0, 7.5
+    evi = (NIR - R) / (NIR + C1 * R - C2 * B + L)
+    evi = evi.clip(max=np.percentile(evi, 99), min=np.percentile(evi, 1))
+    evi = evi.clip(max=1, min=-1) # clip if too big
+    return evi
 
 # ------------------------ Extract images --------------------------------------
