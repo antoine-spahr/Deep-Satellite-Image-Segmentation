@@ -7,10 +7,13 @@ import shapely
 import shapely.wkt
 import descartes
 import skimage
+import rasterio
+
+import warnings
+warnings.filterwarnings("ignore", message="Dataset has no geotransform set. The identity matrix may be returned")
 
 # ------------------------ Extract Polygons ------------------------------------
 
-# Load polygon_list
 def get_polygon_list(img_id, class_id, wkt_df):
     """
 
@@ -27,7 +30,6 @@ def get_polygon_list(img_id, class_id, wkt_df):
     polygon_list = shapely.wkt.loads(polygon.values[0])
     return polygon_list
 
-# Scale polygons
 def get_scale_factor(img_id, grid_df, img_size):
     """
 
@@ -108,10 +110,29 @@ def get_polygons_masks(polygon_dict, order_dict, img_size, filename=None):
         all_mask[:,:,order_dict[class_name]-1] = compute_polygon_mask(poly_list, img_size)
 
     if filename is not None:
-        skimage.external.tifffile.imsave(filename, np.moveaxis(all_mask, 2, 0))
+        #skimage.external.tifffile.imsave(filename, np.moveaxis(all_mask, 2, 0))
+        save_geotiff(filename, np.moveaxis(all_mask, 2, 0), dtype='uint8')
 
     return all_mask
 
+def save_geotiff(filename, img, dtype='uint16'):
+    """
+    Save the image in GeoTiff.
+    ------------
+    INPUT
+        |---- filename (str) the filename to save the image
+        |---- img (3D numpy array) the image to save as B x H x W
+    OUTPUT
+        |---- None
+    """
+    with rasterio.open(filename, \
+                        mode='w', \
+                        driver='GTiff', \
+                        width=img.shape[2], \
+                        height=img.shape[1], \
+                        count=img.shape[0], \
+                        dtype=dtype) as dst:
+        dst.write(img)
 
 def get_polygon_dict(img_id, class_dict, img_size, wkt_df, grid_df):
     """
@@ -144,7 +165,7 @@ def load_image(filepath, img_id):
         |---- filepath (str) the path to the sixteen bands images
         |---- img_id (str) the id of the image to load
     OUTPUT
-        |---- img_A (3D numpy array) the SWIR bands 
+        |---- img_A (3D numpy array) the SWIR bands
         |---- img_M (3D numpy array) the Multispectral bands
         |---- img_P (2D numpy array) the Panchromatic band
     """

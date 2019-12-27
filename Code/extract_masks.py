@@ -28,7 +28,6 @@ grid = pd.read_csv(path_to_drive+'grid_sizes.csv').rename(columns={'Unnamed: 0':
 # load the polygons
 wkt_df = pd.read_csv(path_to_drive+'train_wkt_v4.csv')
 
-# %% masks for all train image
 # get all the image id
 img_id_list = list(wkt_df.ImageId.unique())
 
@@ -39,7 +38,7 @@ for i, img_id in enumerate(img_id_list):
     print(f'\t|---- {i+1:02} : Getting segmentation of image {img_id}')
     img_size = skimage.io.imread(path_to_drive+'sixteen_band/'+img_id+'_P.tif', plugin="tifffile").shape
     pdict = get_polygon_dict(img_id, Class_dict, img_size, wkt_df, grid)
-    masks[img_id] = get_polygons_masks(pdict, order_dict, img_size, filename=path_to_drive+'masks/'+img_id+'_mask.tiff')
+    masks[img_id] = get_polygons_masks(pdict, order_dict, img_size, filename=path_to_drive+'masks/'+img_id+'_mask.tif')
 
 # %% plot masks
 fig, axs = plt.subplots(5,5,figsize=(20,20))

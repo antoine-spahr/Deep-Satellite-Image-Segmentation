@@ -8,7 +8,7 @@ import skimage
 import warnings
 warnings.filterwarnings("ignore", message="Possible precision loss when converting from float64 to uint16")
 
-from utils import load_image, contrast_stretch, NDVI, EVI, pansharpen
+from utils import load_image, save_geotiff, contrast_stretch, NDVI, EVI, pansharpen
 
 """ BANDS
 |-- A
@@ -54,7 +54,8 @@ for i, img_id in enumerate(img_id_list):
     evi = EVI(img_fused[:,:,4], img_fused[:,:,6], img_fused[:,:,1])
     img = np.concatenate([img_fused, np.expand_dims(ndvi,2), np.expand_dims(ndwi,2), np.expand_dims(evi,2)], axis=2)
     img = np.moveaxis(img, 2, 0)
-    skimage.external.tifffile.imsave(path_to_drive+'processed_img/'+img_id+'.tiff', skimage.img_as_uint(img))
+    #skimage.external.tifffile.imsave(path_to_drive+'processed_img/'+img_id+'.tiff', skimage.img_as_uint(img))
+    save_geotiff(path_to_drive+'processed_img/'+img_id+'.tif', skimage.img_as_uint(img), dtype='uint16')
 
 # %% -----------------------------------------------------------------------------------
 # processing example
