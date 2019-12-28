@@ -78,8 +78,6 @@ def plot_masks(ax, masks, order_dict, color_dict):
         ax.imshow(m, cmap = matplotlib.colors.ListedColormap(['white', color_dict[class_name]]), \
                   vmin=0, vmax=1)
 
-
-# Generate Polygon mask
 def compute_polygon_mask(polygon_list, img_size):
     """
 
@@ -243,3 +241,132 @@ def EVI(R, NIR, B):
     return evi
 
 # ------------------------ Extract images --------------------------------------
+
+def get_crops_grid(img_h, img_w, crop_size, overlap):
+    """
+    Get a list of crop coordinates for the image in a grid fashion starting in
+    the upper left corner. There might be some un-considered pixels on the
+    right and bottom.
+    ------------
+    INPUT
+        |---- img_h (int) the image height
+        |---- img_w (int) the image width
+        |---- crop_size (tuple) the height and width of the crop
+        |---- overlap (tuple) the total amount overlapped between crop in the grid
+    OUTPUT
+        |---- crops (list of tuple) list of crop upper left crops coordinates
+    """
+    crops = [] # (row, col)
+    for i in np.arange(0,img_h+crop_size[0],crop_size[0]-overlap[0])[:]:
+        for j in np.arange(0,img_w+crop_size[1],crop_size[1]-overlap[1])[:]:
+            if i+crop_size[0] <= img_h and j+crop_size[1] <= img_w:
+                crops.append((i, j))
+    return crops
+
+def load_image_part(xy, hw, filename, as_float=True):
+    """
+    load an image subpart specified by the crop coordinates and dimensions
+    ------------
+    INPUT
+        |---- xy (tuple) crop coordinsates  as (row, col)
+        |---- hw (tuple) crop dimensions as (h, w)
+        |---- filename (str) the filename
+        |---- as_float (bool) whether to convert the image in float
+    OUTPUT
+        |---- img (3D numpy array) the image subpart
+    """
+    with rasterio.open(filename, mode='r') as src:
+        img = src.read(window=rasterio.windows.Window(xy[1], xy[0], hw[1], hw[0]))
+    if as_float: img = skimage.img_as_float(img)
+    return img
+
+def get_represented_classes(filename_mask, order_dict, crop_coord, crop_size):
+    """
+    find which classes are represented on the crop specified
+    ------------
+    INPUT
+        |---- filename (str) the filename
+        |---- order_dict (dict) a dictionnary specifying the class name associated
+        |                       with which dimension of the masks {dim+1:'name'}
+        |---- crop_coord (tuple) crop coordinsates  as (row, col)
+        |---- crop_size (tuple) crop dimensions as (h, w)
+    OUTPUT
+        |---- classes (list) list of present class name
+    """
+    mask = load_image_part(crop_coord, crop_size, filename_mask, as_float=False)
+    classes = [order_dict[cl+1] for cl in np.unique(mask.nonzero()[0])]
+    return classes
+
+def get_samples(img_id_list, img_path, mask_path, crop_size, overlap, order_dict, cl_offset, cl_size, as_fraction=False, verbose=False):
+    """
+
+    ------------
+    INPUT
+        |---- img_id_list (list) the list of ids of image to processed
+        |---- img_path (str) the folder path to the images
+        |---- mask_path (str) the folder path to the masks
+        |---- crop_size (tuple) crop dimensions as (h, w)
+        |---- overlap (tuple) the total amount overlapped between crop in the grid
+        |---- order_dict (dict) a dictionnary specifying the class name associated
+        |                       with which dimension of the masks {dim+1:'name'}
+        |---- cl_offset (tuple) the offset from crop to check class presence (row, col)
+        |---- cl_size (tuple) the size of the patch where class presence is checked (h, w)
+        |---- as_fraction (bool) whether to specify crop_size as fraction. if
+        |                        True, the crop_size value represent fraction and
+        |                        should be between 0 and 1
+        |---- verbose (bool) whether to display processing
+    OUTPUT
+        |---- sample_df (pandas dataframe) informations for all samples
+    """
+    # DataFrame (img_id, x, y, h, w classes)
+    if verbose :
+        print(f'>>>> Extract samples from images \n'+'-'*80)
+        summary = {'building':0, 'misc':0, 'road':0, 'track':0, \
+                   'tree':0, 'crop':0, 'water':0, 'vehicle':0}
+    # storing variables
+    ids, row, col, H, W, cl_list = [], [], [], [], [], []
+    for i, id in enumerate(img_id_list):
+        if verbose:
+            print(f'\t|---- {i+1:02n} : cropping image {id}')
+            summary2 = {'building':0, 'misc':0, 'road':0, 'track':0, \
+                        'tree':0, 'crop':0, 'water':0, 'vehicle':0}
+        # get height width
+        with rasterio.open(img_path+id+'.tif', mode='r') as src:
+            img_h, img_w = src.height, src.width
+        # define crop size from fraction if requested
+        if as_fraction:
+            crop_size = np.floor(img_h*crop_size[0]), np.floor(img_w*crop_size[1])
+        # get the grid crops
+        crops = get_crops_grid(img_h, img_w, crop_size, overlap)
+        # fill lists
+        for crop in crops:
+            ids.append(id)
+            row.append(crop[0])
+            col.append(crop[1])
+            H.append(crop_size[0])
+            W.append(crop_size[1])
+            classes = get_represented_classes(mask_path+id+'_mask.tif', \
+                                                   order_dict, \
+                                                   (crop[0]+cl_offset[0], crop[1]+cl_offset[1]), \
+                                                   cl_size)
+            # count classes
+            if verbose:
+                for cl in classes:
+                    summary[cl] += 1
+                    summary2[cl] += 1
+            cl_list.append(classes)
+        #display count
+        if verbose:
+            for cl, count in summary2.items():
+                print(f'\t\t|---- {cl} : {count}')
+    # display total count
+    if verbose:
+        print('-'*80+'\n>>>> Total \n')
+        for cl, count in summary.items():
+            print(f'\t|---- {cl} : {count}')
+    # build dataframe
+    sample_df = pd.DataFrame({'img_id':ids, \
+                              'row':row, 'col':col, \
+                              'h':H, 'w':W, \
+                              'classes':cl_list})
+    return sample_df
