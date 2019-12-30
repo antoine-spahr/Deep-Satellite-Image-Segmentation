@@ -27,15 +27,14 @@ img_id_list =  list(pd.read_csv(path_to_drive+'DSTL_data/train_wkt_v4.csv', usec
 id_test = ['6100_2_2', '6060_2_3', '6110_4_0', '6160_2_1']
 id_train = [id for id in img_id_list if id not in id_test]
 
-#%%
-#crops = get_crops_grid(h, w, (160,160), (0,0))
+#%% Generate samples
 crop_size_train = (160,160)
 overlap_train = (80,80)
 class_offset_train = (40,40)
 class_area_train = (80,80)
 
 crop_size_test = (1024,1024)
-overlap_test = (80,80)
+overlap_test = None
 class_offset_test = (0,0)
 class_area_test = crop_size_test
 
@@ -87,4 +86,4 @@ def animate(c):
     return [P1,P2]
 
 anim = matplotlib.animation.FuncAnimation(fig, animate, init_func=init, frames=crops, interval=500, blit=True)
-anim.save('../Figures/train_samples.gif', writer='imagemagick')
+anim.save('../Figures/train_samples.gif', writer='imagemagick', dpi=100)

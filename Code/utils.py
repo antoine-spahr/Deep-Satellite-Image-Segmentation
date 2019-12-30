@@ -242,7 +242,7 @@ def EVI(R, NIR, B):
 
 # ------------------------ Extract images --------------------------------------
 
-def get_crops_grid(img_h, img_w, crop_size, overlap):
+def get_crops_grid(img_h, img_w, crop_size, overlap=None):
     """
     Get a list of crop coordinates for the image in a grid fashion starting in
     the upper left corner. There might be some un-considered pixels on the
@@ -256,6 +256,14 @@ def get_crops_grid(img_h, img_w, crop_size, overlap):
     OUTPUT
         |---- crops (list of tuple) list of crop upper left crops coordinates
     """
+    # compute the overlap if No given
+    if overlap is None:
+        nx = np.ceil(img_h / crop_size[0])
+        ny = np.ceil(img_w / crop_size[1])
+        excess_y = ny*crop_size[0] - img_h
+        excess_x = nx*crop_size[1] - img_w
+        overlap = (np.ceil(excess_y / (ny-1)), np.ceil(excess_x / (nx-1)))
+
     crops = [] # (row, col)
     for i in np.arange(0,img_h+crop_size[0],crop_size[0]-overlap[0])[:]:
         for j in np.arange(0,img_w+crop_size[1],crop_size[1]-overlap[1])[:]:
