@@ -55,9 +55,6 @@ df_test = get_samples(id_test, \
 df_train.to_csv(path_to_data+'train_samples.csv')
 df_test.to_csv(path_to_data+'test_samples.csv')
 
-# get only buildings
-#df_build = df[pd.DataFrame(df.classes.tolist()).isin(['vehicle']).any(1)]
-
 # -----------------------------------------------------------------------------------------
 #%%
 subimg = load_image_part((0,0), (5*80,8*80), path_to_img+id_train[2]+'.tif')

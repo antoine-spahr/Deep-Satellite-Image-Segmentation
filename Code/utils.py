@@ -8,6 +8,8 @@ import shapely.wkt
 import descartes
 import skimage
 import rasterio
+from prettytable import PrettyTable
+import torch
 
 import warnings
 warnings.filterwarnings("ignore", message="Dataset has no geotransform set. The identity matrix may be returned")
@@ -16,14 +18,14 @@ warnings.filterwarnings("ignore", message="Dataset has no geotransform set. The 
 
 def get_polygon_list(img_id, class_id, wkt_df):
     """
-
+    Load the polygons from the wkt dataframe for the specifed img and class.
     ------------
     INPUT
-        |---- img_id
-        |---- class_id
-        |---- wkt_df
+        |---- img_id (str) the image id
+        |---- class_id (int) the class identifier
+        |---- wkt_df (pandas.DataFrame) dataframe containing the wkt
     OUTPUT
-        |---- polygon_list
+        |---- polygon_list (shapely.MultiPolygon) the list of polygon
     """
     all_polygon = wkt_df[wkt_df.ImageId == img_id]
     polygon = all_polygon[all_polygon.ClassType == class_id].MultipolygonWKT
@@ -32,7 +34,14 @@ def get_polygon_list(img_id, class_id, wkt_df):
 
 def get_scale_factor(img_id, grid_df, img_size):
     """
-
+    Load the polygons from the wkt dataframe for the specifed img and class.
+    ------------
+    INPUT
+        |---- img_id (str) the image id
+        |---- grid_df (pandas.DataFrame) dataframe containing the scalling info
+        |---- img_size (tuple) dimension of the image
+    OUTPUT
+        |---- scale (tuple) the scalling factor for the given image
     """
     img_h, img_w = img_size
     xmax = grid_df.loc[grid_df['ImageId']==img_id, 'Xmax'].values[0]
@@ -42,7 +51,13 @@ def get_scale_factor(img_id, grid_df, img_size):
 
 def scale_polygon_list(polygon_list, scale):
     """
-
+    Scale the polygon list.
+    ------------
+    INPUT
+        |---- polygon_list (shapely.MultiPolygon) the list of polygon
+        |---- scale (tuple) the scalling factor for the given image
+    OUTPUT
+        |---- polygon_list_scaled () scaled polygon_list
     """
     polygon_list_scaled = shapely.affinity.scale(polygon_list, \
                                                  xfact=scale[0], \
@@ -54,7 +69,15 @@ def scale_polygon_list(polygon_list, scale):
 # Plot polygon
 def plot_polygons(ax, polygon_dict, color_dict, legend=True):
     """
-
+    Plot the polygon on a matplotlib Axes.
+    ------------
+    INPUT
+        |---- ax (matplotlib.Axes) the axes on which to plot
+        |---- polygon_dict (dict) dictionnary of shapely.MultiPolygon for each classe by name
+        |---- color_dict (dict) the color associated with each classes
+        |---- legend (bool) whether to add a legend to the plot
+    OUTPUT
+        |---- mask (2D numpy.array) the mask
     """
     layer_order = {1:'crop', 2:'water', 3:'road', 4:'track',\
                    5:'building', 6:'misc', 7:'vehicle', 8:'tree'}
@@ -66,7 +89,15 @@ def plot_polygons(ax, polygon_dict, color_dict, legend=True):
 
 def plot_masks(ax, masks, order_dict, color_dict):
     """
-
+    Plot the masks on a matplotlib Axes.
+    ------------
+    INPUT
+        |---- ax (matplotlib.Axes) the axes on which to plot
+        |---- masks (3D numpy.array) the masks to plot (C x H x W)
+        |---- order_dict (dict) dictionnary of class order in the resulting mask
+        |---- color_dict (dict) the color associated with each classes
+    OUTPUT
+        |---- mask (2D numpy.array) the mask
     """
     layer_order = {1:'crop', 2:'water', 3:'road', 4:'track',\
                    5:'building', 6:'misc', 7:'vehicle', 8:'tree'}
@@ -80,7 +111,13 @@ def plot_masks(ax, masks, order_dict, color_dict):
 
 def compute_polygon_mask(polygon_list, img_size):
     """
-
+    Convert the shapely.MultiPolygon into a numpy mask.
+    ------------
+    INPUT
+        |---- polygon_list (shapely.MultiPolygon) the list of polygon
+        |---- img_size (tuple) dimension of the image
+    OUTPUT
+        |---- mask (2D numpy.array) the mask
     """
     # fill mask image
     mask = np.zeros(img_size, np.uint8)
@@ -100,8 +137,16 @@ def compute_polygon_mask(polygon_list, img_size):
     return mask
 
 def get_polygons_masks(polygon_dict, order_dict, img_size, filename=None):
-    """ 8xHxW
-
+    """
+    Convert the shapely polygons_dict into one numpy mask.
+    ------------
+    INPUT
+        |---- polygon_dict (dict) dictionnary of shapely.MultiPolygon for each classe by name
+        |---- order_dict (dict) dictionnary of class order in the resulting mask
+        |---- img_size (tuple) dimension of the image
+        |---- filename (str) path to save the mask (save only if given)
+    OUTPUT
+        |---- all_mask (3D numpy.array) the mask in dimension (C x H x W)
     """
     all_mask = np.zeros((img_size[0], img_size[1], len(order_dict)), np.uint8)
     for class_name, poly_list in polygon_dict.items():
@@ -134,7 +179,16 @@ def save_geotiff(filename, img, dtype='uint16'):
 
 def get_polygon_dict(img_id, class_dict, img_size, wkt_df, grid_df):
     """
-
+    Get the polygon list for the specified image classes from the raw information.
+    ------------
+    INPUT
+        |---- img_id (str) the image id
+        |---- class_dict (dictionnary) dictionnary specifying group of classes and name
+        |---- img_size (tuple) dimension of the image
+        |---- wkt_df (pandas.DataFrame) dataframe containing the wkt
+        |---- grid_df (pandas.DataFrame) dataframe containing the scalling info
+    OUTPUT
+        |---- polygon_dict (dict) dictionnary of shapely.MultiPolygon for each classe by name
     """
     polygon_dict = {}
     for class_name, class_val in class_dict.items():
@@ -273,7 +327,7 @@ def get_crops_grid(img_h, img_w, crop_size, overlap=None):
 
 def load_image_part(xy, hw, filename, as_float=True):
     """
-    load an image subpart specified by the crop coordinates and dimensions
+    load an image subpart specified by the crop coordinates and dimensions.
     ------------
     INPUT
         |---- xy (tuple) crop coordinsates  as (row, col)
@@ -290,7 +344,7 @@ def load_image_part(xy, hw, filename, as_float=True):
 
 def get_represented_classes(filename_mask, order_dict, crop_coord, crop_size):
     """
-    find which classes are represented on the crop specified
+    find which classes are represented on the crop specified.
     ------------
     INPUT
         |---- filename (str) the filename
@@ -307,7 +361,7 @@ def get_represented_classes(filename_mask, order_dict, crop_coord, crop_size):
 
 def get_samples(img_id_list, img_path, mask_path, crop_size, overlap, order_dict, cl_offset, cl_size, as_fraction=False, verbose=False):
     """
-
+    Produce a pandas datafarme containing all the crop informations.
     ------------
     INPUT
         |---- img_id_list (list) the list of ids of image to processed
@@ -378,3 +432,64 @@ def get_samples(img_id_list, img_path, mask_path, crop_size, overlap, order_dict
                               'h':H, 'w':W, \
                               'classes':cl_list})
     return sample_df
+
+# ------------------------ Training functions  ---------------------------------
+
+def print_param_summary(**params):
+    """
+    Print the dictionnary passed as a table.
+    ------------
+    INPUT
+        |---- params (keyword arguments) value to display in PrettyTable
+    OUTPUT
+        |---- None
+    """
+    print(f'\n>>> Training parameters summary')
+    tparam = PrettyTable(['Parameter','Value'])
+    tparam.hrules = 1
+    tparam.align = 'l'
+    for key, value in params.items():
+        tparam.add_row([key, value])
+    print(tparam)
+
+def stat_from_list(list):
+    """
+    Compute the mean and standard deviation of the list.
+    ------------
+    INPUT
+        |---- list (list) list of value
+    OUTPUT
+        |---- mean (float) the mean of the list values
+        |---- std (float) the standard deviation of the list of values
+    """
+    list = torch.Tensor(list)
+    return list.mean().item(), list.std().item()
+
+def append_scores(dest_dict, **keys):
+    """
+    Add the kwargs to the passed dictionnary. Each entry (key) is then a list
+    of value. The value passe is append to such list. If a key is not present
+    in the disctionnary, it is added. If a value is a list, the mean and std
+    are append to the dictionnary.
+    ------------
+    INPUT
+        |---- dest_dict (dictionnary) where the values are append (modified inplace)
+        |---- keys (keyword arguments) value to append
+    OUTPUT
+        |---- None
+    """
+    for name, val in keys.items():
+        if type(val) is list:
+            m, s = stat_from_list(val)
+            if name in dest_dict.keys():
+                dest_dict[name]['mean'].append(m)
+                dest_dict[name]['std'].append(s)
+            else:
+                dest_dict[name] = {}
+                dest_dict[name]['mean'] = [m]
+                dest_dict[name]['std'] = [s]
+        else:
+            if name in dest_dict.keys():
+                dest_dict[name].append(val)
+            else:
+                dest_dict[name] = [val]
