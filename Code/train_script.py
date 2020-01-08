@@ -14,7 +14,6 @@ import sys
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib
-import glob
 from prettytable import PrettyTable
 
 from learning_classes import dataset, U_net
@@ -185,27 +184,3 @@ print('\n>>> LOG saved on disk at'+path_to_output+model_name+'_log_train.pickle'
 # Save trained model state dict
 torch.save(model.state_dict(), path_to_output+model_name+'_trained.pt')
 print('\n>>> Trained model saved on disk at'+path_to_output+model_name+'_trained.pt')
-
-#%%-------------------------------------------------------------------------------------------------
-####################################################################################################
-####################################################################################################
-####################################################################################################
-# PlayGround
-
-# %% load sample_df
-df = pd.read_csv(path_to_data+'train_samples.csv', index_col=0, converters={'classes' : literal_eval})
-# %% get only selected class
-this_class = 'water'
-df_c = df[pd.DataFrame(df.classes.tolist()).isin([this_class]).any(1)]
-train_set = dataset(df_c, path_to_img, path_to_mask, class_position[this_class], augment=True, crop_size=(144,144))
-
-fig, axs = plt.subplots(4,5,figsize=(20,15))
-for i, ax in enumerate(axs.reshape(-1)):
-    img, mask = train_set.__getitem__(np.random.randint(0, df_c.shape[0]))
-    ax.imshow(np.moveaxis(np.array(img[[4,2,1], :, :]), 0, 2))
-    m = np.ma.masked_where(mask == 0, mask)
-    ax.imshow(m, cmap = matplotlib.colors.ListedColormap(['Orangered', 'white']), vmin=0, vmax=1, alpha=0.25)
-    ax.set_axis_off()
-fig.tight_layout()
-plt.show()
-mask
