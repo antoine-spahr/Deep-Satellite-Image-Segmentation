@@ -2,14 +2,15 @@ import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
 import pandas as pd
+from ast import literal_eval
 import os
 import shapely
 import shapely.wkt
 import descartes
 import skimage
 import rasterio
-from prettytable import PrettyTable
 import torch
+import pickle
 
 import warnings
 warnings.filterwarnings("ignore", message="Dataset has no geotransform set. The identity matrix may be returned")
@@ -65,9 +66,7 @@ def scale_polygon_list(polygon_list, scale):
                                                  origin = [0., 0., 0.])
     return polygon_list_scaled
 
-
-# Plot polygon
-def plot_polygons(ax, polygon_dict, color_dict, legend=True):
+def plot_polygons(ax, polygon_dict, color_dict, zorder_dict, legend=True, **legend_kwargs):
     """
     Plot the polygon on a matplotlib Axes.
     ------------
@@ -76,38 +75,39 @@ def plot_polygons(ax, polygon_dict, color_dict, legend=True):
         |---- polygon_dict (dict) dictionnary of shapely.MultiPolygon for each classe by name
         |---- color_dict (dict) the color associated with each classes
         |---- legend (bool) whether to add a legend to the plot
+        |---- zorder_dict (dict) the order of stacking the classes
+        |---- legend_kwargs (kwargs) keywords arguments for the legend
     OUTPUT
-        |---- mask (2D numpy.array) the mask
+        |---- None
     """
-    layer_order = {1:'crop', 2:'water', 3:'road', 4:'track',\
-                   5:'building', 6:'misc', 7:'vehicle', 8:'tree'}
-    for i, _ in enumerate(range(len(layer_order)), start=1):
-        ax.add_patch(descartes.PolygonPatch(polygon_dict[layer_order[i]], \
-                                            color=color_dict[layer_order[i]], \
-                                            linewidth=0, label=layer_order[i]))
-    if legend : ax.legend()
+    for class_name in list(zorder_dict.keys()):
+        ax.add_patch(descartes.PolygonPatch(polygon_dict[class_name], \
+                                            color=color_dict[class_name], \
+                                            zorder=zorder_dict[class_name], \
+                                            linewidth=0, label=class_name))
+    if legend : ax.legend(**legend_kwargs)
 
-def plot_masks(ax, masks, order_dict, color_dict):
+def plot_masks(ax, masks, order_dict, color_dict, zorder_dict, mask_alpha=1, legend=False, **legend_kwargs):
     """
     Plot the masks on a matplotlib Axes.
     ------------
     INPUT
         |---- ax (matplotlib.Axes) the axes on which to plot
-        |---- masks (3D numpy.array) the masks to plot (C x H x W)
+        |---- masks (3D numpy.array) the masks to plot (H x W x C)
         |---- order_dict (dict) dictionnary of class order in the resulting mask
         |---- color_dict (dict) the color associated with each classes
+        |---- zorder_dict (dict) the order of stacking the classes
+        |---- legend_kwargs (kwargs) keywords arguments for the legend
     OUTPUT
-        |---- mask (2D numpy.array) the mask
+        |---- None
     """
-    layer_order = {1:'crop', 2:'water', 3:'road', 4:'track',\
-                   5:'building', 6:'misc', 7:'vehicle', 8:'tree'}
-
-    for i, _ in enumerate(range(len(layer_order)), start=1):
-        class_name = layer_order[i]
+    for class_name in list(zorder_dict.keys()):
         pos = order_dict[class_name]
         m = np.ma.masked_where(masks[:,:,pos-1] == 0, masks[:,:,pos-1])
         ax.imshow(m, cmap = matplotlib.colors.ListedColormap(['white', color_dict[class_name]]), \
-                  vmin=0, vmax=1)
+                  vmin=0, vmax=1, alpha=mask_alpha, zorder=zorder_dict[class_name])
+
+    if legend : ax.legend([matplotlib.patches.Patch(fc=color, alpha=mask_alpha) for color in list(color_dict.values())], list(color_dict.keys()), **legend_kwargs)
 
 def compute_polygon_mask(polygon_list, img_size):
     """
@@ -440,17 +440,50 @@ def print_param_summary(**params):
     Print the dictionnary passed as a table.
     ------------
     INPUT
-        |---- params (keyword arguments) value to display in PrettyTable
+        |---- params (keyword arguments) value to display
     OUTPUT
         |---- None
     """
-    print(f'\n>>> Training parameters summary')
-    tparam = PrettyTable(['Parameter','Value'])
-    tparam.hrules = 1
-    tparam.align = 'l'
+    # get the max length of values and keys
+    max_len = max([len(str(key)) for key in params.keys()])+5
+    max_len_val = max([max([len(subval) for subval in str(val).split('\n')]) for val in params.values()])+3
+    # print header
+    print('-'*(max_len+max_len_val+1))
+    print('| Parameter'.ljust(max_len) + '| Value'.ljust(max_len_val)+'|')
+    print('-'*(max_len+max_len_val+1))
+    # print values and subvalues
     for key, value in params.items():
-        tparam.add_row([key, value])
-    print(tparam)
+        for i, subvalue in enumerate(str(value).split('\n')):
+            if i == 0 :
+                print(f'| {key}'.ljust(max_len)+f'| {subvalue}'.ljust(max_len_val)+'|')
+            else :
+                print('| '.ljust(max_len)+f'| {subvalue}'.ljust(max_len_val)+'|')
+    print('-'*(max_len+max_len_val+1))
+
+def load_sample_df(filename, class_type, others_frac=0, seed=None):
+    """
+    Load the sample information dataframe for a given class by adding a fraction
+    of non-class_type to it.
+    ------------
+    INPUT
+        |---- filename (str) patht to the csv file.
+        |---- class_type (str) class name to select
+        |---- other_frac (float) between 0 and 1, specify the fraction of the
+        |                        class_type dataframe of non-class_type element
+        |                        to add.
+        |---- seed (int) passed to the random_state of pandas.DatsFrame.sample
+    OUTPUT
+        |---- sub_df (pandas.DataFrame) The dataframe of the class_type
+    """
+    df = pd.read_csv(filename, index_col=0, converters={'classes' : literal_eval})
+    # get samples with the given class
+    sub_df = df[pd.DataFrame(df.classes.tolist()).isin([class_type]).any(1)]
+    # get sample without the given class
+    other_df = df[~pd.DataFrame(df.classes.tolist()).isin([class_type]).any(1)]
+    # add other_frac percent of other in sub, shuffle the rows and reset the index
+    other_df = other_df.sample(n=int(others_frac*sub_df.shape[0]), random_state=seed, axis=0)
+    sub_df = pd.concat([sub_df, other_df], axis=0).sample(frac=1, random_state=seed)
+    return sub_df
 
 def stat_from_list(list):
     """
@@ -493,3 +526,157 @@ def append_scores(dest_dict, **keys):
                 dest_dict[name].append(val)
             else:
                 dest_dict[name] = [val]
+
+# ------------------------- Testing functions  ---------------------------------
+
+def load_models(folder_path, class_names, model_class, **model_param):
+    """
+    Load the models in the given folder.
+    ------------
+    Input
+        |---- folder_path (str) path to the folder
+        |---- class_names (list) list of class_name to load
+        |---- model_class (pytorch.nn.Module) a model class
+        |---- model_param (kwargs) the model parameters as kwargs
+    OUTPUT
+        |---- models (dict) dictionary of models (value) for each class name (key)
+    """
+    models = {}
+    for class_type in class_names:
+        try:
+            state_dict = torch.load(folder_path+'Unet_'+class_type+'_trained.pt', map_location=torch.device('cpu'))
+            models[class_type] = model_class(**model_param)
+            models[class_type].load_state_dict(state_dict)
+        except FileNotFoundError:
+            pass
+    return models
+
+def load_logs(folder_path, class_names):
+    """
+    Load the training LOG in the given folder.
+    ------------
+    Input
+        |---- folder_path (str) path to the folder
+        |---- class_names (list) list of class_name to load
+    OUTPUT
+        |---- logs_train (dict) dictionary of LOGS (value) for each class name (key)
+    """
+    logs_train = {}
+    for class_type in class_names:
+        try:
+            with open(folder_path+'Unet_'+class_type+'_log_train.pickle', 'rb') as f:
+                logs_train[class_type] = pickle.load(f)
+        except FileNotFoundError:
+            pass
+    return logs_train
+
+def plot_loss(log_train, ax, title=None, train=False, disp_std=True):
+    """
+    Plot the loss, validation jaccard and F1-scores on the given axis.
+    ------------
+    Input
+        |---- log_train (dict) dictionnary contaiing the LOG of the training
+        |---- ax (matplotlib.Axes) the axes on which to plot
+        |---- title (str) optional title
+        |---- train (bool) whether to inclue train scores curves
+        |---- disp_std (bool) whether to add the 2STD range around score curves
+    OUTPUT
+        |---- None
+    """
+    # plot loss
+    ax.plot(log_train['epoch'], log_train['loss'], lw=2.5, color='gray', label='loss')
+    ax.set_xlim([log_train['epoch'][0], log_train['epoch'][-1]])
+    # twin ax
+    ax_r = ax.twinx()
+    scores = ['jaccard_val', 'f1_val']
+    colors = ['coral', 'crimson']
+    if train :
+        scores += ['jaccard_train', 'f1_train']
+        colors += ['cornflowerblue','dodgerblue']
+    # plot scores evolution
+    for score, color in zip(scores, colors):
+        mean, std = np.array(log_train[score]['mean']), np.array(log_train[score]['std'])
+        ax_r.plot(log_train['epoch'], mean, lw=2, color=color, label=score.title().replace("_", " "))
+        if disp_std : ax_r.fill_between(log_train['epoch'], mean-2*std, mean+2*std, fc=color, alpha=0.15)
+    # plot goodies
+    ax_r.set_ylim([0,1])
+    ax.set_xlabel('Epochs')
+    ax.set_ylabel('Loss')
+    ax_r.set_ylabel('Scores')
+    handles, labels = ax.get_legend_handles_labels()
+    handles_r, labels_r = ax_r.get_legend_handles_labels()
+    ax.legend(handles+handles_r, labels+labels_r)
+    ax.set_title(title, loc='left', fontweight='bold')
+
+def class_prediction(model, input, augmented_pred=True):
+    """
+    Segmente the passed image with the passed model and retrun the mask. It can
+    be the average over flipped and rotated input or just the direct prediction.
+    ------------
+    Input
+        |---- model (torch.nn.Module) The model to use
+        |---- input (torch.Tensor) The input image (C x H x W)
+        |---- augmented_pred (bool) whether to take the average prediction over
+        |                           flip and rotations
+    OUTPUT
+        |---- prediction (2D torch.Tensor) the segmentation
+    """
+    if augmented_pred:
+        predictions = []
+         # horizontal or vertical flip
+        for dim_flip in [None, 1, 2]:
+            # 0, 90, 180, 270 degree rotations
+            for rot_angle in [0,1,2,3]:
+                if not dim_flip is None:
+                    transformed_input = torch.flip(input, dims=[dim_flip]) # flip
+                else:
+                    transformed_input = input
+                transformed_input = torch.rot90(transformed_input, k=rot_angle, dims=[1,2]) # rotate
+                pred = torch.squeeze(model(transformed_input.unsqueeze(0)), dim=0).argmax(dim=0) # predict
+                corrected_pred = torch.rot90(pred, k=-rot_angle, dims=[0,1]) # un-rotate
+                if not dim_flip is None:
+                    corrected_pred = torch.flip(corrected_pred, dims=[dim_flip-1])# un-flip
+                predictions.append(corrected_pred)
+        prediction = torch.stack(predictions, dim=2).float() # stack
+        prediction = prediction.mean(dim=2) # mean
+        prediction = torch.where(prediction >= 0.5, torch.ones(pred.shape), torch.zeros(pred.shape)) # thresholding
+    else:
+        prediction = torch.squeeze(model(input.unsqueeze(0)), dim=0).argmax(dim=0) # predict
+    return prediction
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#

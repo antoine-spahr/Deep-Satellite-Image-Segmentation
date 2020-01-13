@@ -18,6 +18,9 @@ order_dict = {'building':1, 'misc':2, 'road':3, 'track':4, \
 color_dict = {'building':'0.7', 'misc':'0.4', 'road':'#b35806', 'track':'#dfc27d', \
               'tree':'#1b7837', 'crop':'#a6dba0', 'water':'#74add1', 'vehicle':'#f46d43'}
 
+zorder_dict = {'crop':1, 'water':2, 'road':3, 'track':4,\
+               'building':5, 'misc':6, 'vehicle':7, 'tree':8}
+
 # %% Get to the external drive and check for its presence
 path_to_drive = '/Volumes/SupMem/DSTL_data/'
 if not os.path.isdir(path_to_drive): print("Cannot find the external drive!")
@@ -43,7 +46,7 @@ for i, img_id in enumerate(img_id_list):
 # %% plot masks
 fig, axs = plt.subplots(5,5,figsize=(20,20))
 for (id, mask), ax in zip(masks.items(), axs.reshape(-1)):
-    plot_masks(ax, mask, order_dict, color_dict)
+    plot_masks(ax, mask, order_dict, color_dict, zorder_dict, legend=False)
     ax.set_title(id, fontsize=14)
     ax.set_axis_off()
 

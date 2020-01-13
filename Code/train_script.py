@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import torch.cuda as cuda
 
 from sklearn.metrics import jaccard_score, accuracy_score, f1_score
+from sklearn.model_selection import train_test_split
 
 import numpy as np
 import pandas as pd
@@ -14,10 +15,9 @@ import sys
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib
-from prettytable import PrettyTable
 
-from learning_classes import dataset, U_net
-from utils import print_param_summary, append_scores
+from learning_classes import dataset, U_net, U_net2
+from utils import print_param_summary, append_scores, load_sample_df
 
 #%%-------------------------------------------------------------------------------------------------
 # General declaration
@@ -37,9 +37,9 @@ class_position = {'building':0, 'misc':1, 'road':2, 'track':3, \
 # Get the Dataset and Dataloader
 
 # recover the class to train from passed argument or define it
-class_type = 'water'
+class_type = 'building'
 # if sys.argv[1]:
-#     if sys.argv[1] in [i for i in range(8)]:
+#     if sys.argv[1] in list(class_position.keys()):
 #         class_type = sys.argv[1]
 #     else:
 #         raise ValueError(f'Wrong Input class type. Should be one of {list(class_position.keys())}')
@@ -48,17 +48,16 @@ class_type = 'water'
 augment_data = True
 crop_size = (144,144)
 train_frac = 0.85
+non_class_fraction = 0.15
 
 # the full data
-df = pd.read_csv(path_to_data+'train_samples.csv', index_col=0, converters={'classes' : literal_eval})
-df = df[pd.DataFrame(df.classes.tolist()).isin([class_type]).any(1)]
-# the size for the split
-train_size = int(df.shape[0]*train_frac)
-val_size = df.shape[0]-train_size
+df = load_sample_df(path_to_data+'train_samples.csv', class_type=class_type, others_frac=non_class_fraction, seed=1)
+# train validation split
+train_df, val_df = train_test_split(df, train_size=train_frac, random_state=1)
 
 # the train and validation datasets
-full_dataset = dataset(df, path_to_img, path_to_mask, class_position[class_type], augment=augment_data, crop_size=crop_size)
-train_set, val_set = torch.utils.data.random_split(full_dataset, [train_size, val_size])
+train_set = dataset(train_df, path_to_img, path_to_mask, class_position[class_type], augment=augment_data, crop_size=crop_size)
+val_set = dataset(val_df, path_to_img, path_to_mask, class_position[class_type], augment=augment_data, crop_size=crop_size)
 
 # parameters for the dataloader , adapt batch size to ensure at least 4 batches
 train_dataloader_params = {'batch_size': min(64, int(train_set.__len__()/4)), 'shuffle': True, 'num_workers': 6}
@@ -88,7 +87,7 @@ lr = 0.0001
 criterion = nn.CrossEntropyLoss()
 
 # initialize de model
-model = U_net(in_channel=11)
+model = U_net2(in_channel=11)
 model = model.to(device)
 
 # the optimizer
@@ -99,10 +98,14 @@ model_name = 'Unet_' + class_type
 # save params to log
 log_train['params'] = {'device':device, 'train_dataloader_params':train_dataloader_params, \
                        'val_dataloader_params':val_dataloader_params, \
-                       'n_epoch':n_epoch, 'lr':lr, 'loss_function':criterion, \
-                       'optimizer':optimizer, 'class':class_type, 'data_augmentation':augment_data, \
-                       'train size':train_size, 'validation size':val_size, \
+                       'n_epoch':n_epoch, 'lr':lr, 'loss_function':str(criterion), \
+                       'optimizer':str(optimizer), 'class':class_type, 'data_augmentation':augment_data, \
+                       'train size':train_df.shape[0], 'validation size':val_df.shape[0], \
+                       'non_class_fraction':non_class_fraction, \
                        'N parameters Unet':sum(p.numel() for p in model.parameters())}
+# save split indices
+log_train['split_indices'] = {'train':train_set.sample_df.index.tolist(), 'val':val_set.sample_df.index.tolist()}
+# print parameter summary
 print_param_summary(**log_train['params'])
 
 #%%-------------------------------------------------------------------------------------------------
@@ -123,10 +126,13 @@ except:
     print('Error when loading the checkpoint.')
     exit(1)
 
-t = PrettyTable()
-t.field_names = ['Epoch', 'Sum loss     ', 'Validation Jaccard   ', 'Validation F1     ']
-print(t)
+# initial print
+pads = [8,14,25,25]
+print('-'*(sum(pads)+1))
+print('| Epoch'.ljust(pads[0]) + '| Sum loss'.ljust(pads[1]) + '| Validation Jaccard'.ljust(pads[2]) + '| Validation F1'.ljust(pads[3])+'|')
+print('-'*(sum(pads)+1))
 
+# train
 for epoch in range(nb_epochs_finished, n_epoch):
     sum_loss = 0.0
     jaccard_train = []
@@ -150,24 +156,27 @@ for epoch in range(nb_epochs_finished, n_epoch):
         optimizer.step()
         # compute train scores
         with torch.set_grad_enabled(False):
-            jaccard_train.append(jaccard_score(train_label.flatten(), output.argmax(dim=1).flatten()))
-            f1_train.append(f1_score(train_label.flatten(), output.argmax(dim=1).flatten()))
+            jaccard_train.append(jaccard_score(train_label.flatten().cpu(), output.argmax(dim=1).flatten().cpu()))
+            f1_train.append(f1_score(train_label.flatten().cpu(), output.argmax(dim=1).flatten().cpu()))
 
     # compute validation scores
     with torch.set_grad_enabled(False):
         for val_data, val_label in val_dataloader:
             val_data, val_label = val_data.to(device), val_label.to(device).long()
             val_pred = model(val_data).argmax(dim=1)
-            jaccard_val.append(jaccard_score(val_label.flatten(), val_pred.flatten()))
-            f1_val.append(f1_score(val_label.flatten(), val_pred.flatten()))
+            jaccard_val.append(jaccard_score(val_label.flatten().cpu(), val_pred.flatten().cpu()))
+            f1_val.append(f1_score(val_label.flatten().cpu(), val_pred.flatten().cpu()))
 
     # append values to log
     append_scores(log_train, epoch=epoch+1, loss=sum_loss, \
                              jaccard_train=jaccard_train, jaccard_val=jaccard_val, \
                              f1_train=f1_train, f1_val=f1_val)
     # print epoch summary
-    t.add_row([f'{epoch+1:03d}', f'{sum_loss:.2f}', f'{log_train["jaccard_val"]["mean"][-1]:.2%}', f'{log_train["f1_val"]["mean"][-1]:.2%}'])
-    print('\n'.join(t.get_string().splitlines()[-2:]))
+    print(f'| {epoch+1:03d}'.ljust(pads[0]) + \
+          f'| {sum_loss:.2f}'.ljust(pads[1]) + \
+          f'| {log_train["jaccard_val"]["mean"][-1]:.2%}'.ljust(pads[2]) + \
+          f'| {log_train["f1_val"]["mean"][-1]:.2%}'.ljust(pads[3])+'|')
+    print('-'*(sum(pads)+1))
 
     # save the current model state as checkpoint
     checkpoint = {'nb_epochs_finished': epoch+1, \

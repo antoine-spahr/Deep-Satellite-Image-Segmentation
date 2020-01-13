@@ -1,5 +1,6 @@
 import numpy as np
 import skimage
+import skimage.transform
 import rasterio
 
 import torch
@@ -212,6 +213,52 @@ class U_net(nn.Module):
     #x = F.interpolate(x, scale_factor=2, mode='bilinear')
     x = F.selu(self.convT1(x))
     x = self.RBU1.forward(torch.cat((r4, x), dim=1))
+    #x = F.interpolate(x, scale_factor=2, mode='bilinear')
+    x = F.selu(self.convT2(x))
+    x = self.RBU2.forward(torch.cat((r3, x), dim=1))
+    #x = F.interpolate(x, scale_factor=2, mode='bilinear')
+    x = F.selu(self.convT3(x))
+    x = self.RBU3.forward(torch.cat((r2, x), dim=1))
+    #x = F.interpolate(x, scale_factor=2, mode='bilinear')
+    x = F.selu(self.convT4(x))
+    x = self.RBU4.forward(torch.cat((r1, x), dim=1))
+    x = F.selu(self.convFinal(x))
+    return x
+
+
+# Shallower
+class U_net2(nn.Module):
+  """  """
+  def __init__(self, in_channel):
+    """  """
+    nn.Module.__init__(self)
+    # Down blocks
+    self.RBD1 = ResBlock(in_channel,32)
+    self.RBD2 = ResBlock(32,64)
+    self.RBD3 = ResBlock(64,128)
+    self.RBD4 = ResBlock(128,256)
+
+    # Up blocks
+    self.convT2 = nn.ConvTranspose2d(256, 128, kernel_size=3, padding=1, stride=2, output_padding=1)
+    self.RBU2 = ResBlock(128+128,128)
+    self.convT3 = nn.ConvTranspose2d(128, 128, kernel_size=3, padding=1, stride=2, output_padding=1)
+    self.RBU3 = ResBlock(128+64,64)
+    self.convT4 = nn.ConvTranspose2d(64, 64, kernel_size=3, padding=1, stride=2, output_padding=1)
+    self.RBU4 = ResBlock(64+32,32)
+    self.convFinal = nn.Conv2d(32,2, kernel_size=3, padding=1)
+
+  def forward(self, x):
+    """  """
+    # dimension Batch x Channel x Width x Height
+    # down
+    r1 = self.RBD1.forward(x)
+    x = F.max_pool2d(r1, kernel_size=2, stride=2)
+    r2 = self.RBD2.forward(x)
+    x = F.max_pool2d(r2, kernel_size=2, stride=2)
+    r3 = self.RBD3.forward(x)
+    x = F.max_pool2d(r3, kernel_size=2, stride=2)
+    x = self.RBD4.forward(x)
+    # up
     #x = F.interpolate(x, scale_factor=2, mode='bilinear')
     x = F.selu(self.convT2(x))
     x = self.RBU2.forward(torch.cat((r3, x), dim=1))
