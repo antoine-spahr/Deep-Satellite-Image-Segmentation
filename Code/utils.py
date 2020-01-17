@@ -10,6 +10,7 @@ import descartes
 import skimage
 import rasterio
 import torch
+import torch.cuda as cuda
 import pickle
 
 import warnings
@@ -608,45 +609,97 @@ def plot_loss(log_train, ax, title=None, train=False, disp_std=True):
     ax.legend(handles+handles_r, labels+labels_r)
     ax.set_title(title, loc='left', fontweight='bold')
 
-def class_prediction(model, input, augmented_pred=True):
+def class_prediction(model, input, augmented_pred=True, device=torch.device('cpu')):
     """
     Segmente the passed image with the passed model and retrun the mask. It can
     be the average over flipped and rotated input or just the direct prediction.
     ------------
     Input
         |---- model (torch.nn.Module) The model to use
-        |---- input (torch.Tensor) The input image (C x H x W)
+        |---- input (torch.Tensor) The input image (B x C x H x W)
         |---- augmented_pred (bool) whether to take the average prediction over
         |                           flip and rotations
+        |---- device (torch.device) the device on which operation are performed
     OUTPUT
         |---- prediction (2D torch.Tensor) the segmentation
     """
     if augmented_pred:
         predictions = []
          # horizontal or vertical flip
-        for dim_flip in [None, 1, 2]:
+        for dim_flip in [None, 2, 3]:
             # 0, 90, 180, 270 degree rotations
             for rot_angle in [0,1,2,3]:
                 if not dim_flip is None:
                     transformed_input = torch.flip(input, dims=[dim_flip]) # flip
                 else:
                     transformed_input = input
-                transformed_input = torch.rot90(transformed_input, k=rot_angle, dims=[1,2]) # rotate
-                pred = torch.squeeze(model(transformed_input.unsqueeze(0)), dim=0).argmax(dim=0) # predict
-                corrected_pred = torch.rot90(pred, k=-rot_angle, dims=[0,1]) # un-rotate
+                transformed_input = torch.rot90(transformed_input, k=rot_angle, dims=[2,3]) # rotate
+                pred = model(transformed_input).argmax(dim=1) # predict
+                corrected_pred = torch.rot90(pred, k=-rot_angle, dims=[1,2]) # un-rotate
                 if not dim_flip is None:
                     corrected_pred = torch.flip(corrected_pred, dims=[dim_flip-1])# un-flip
                 predictions.append(corrected_pred)
-        prediction = torch.stack(predictions, dim=2).float() # stack
-        prediction = prediction.mean(dim=2) # mean
-        prediction = torch.where(prediction >= 0.5, torch.ones(pred.shape), torch.zeros(pred.shape)) # thresholding
+        prediction = torch.stack(predictions, dim=3).float() # stack
+        prediction = prediction.mean(dim=3) # mean
+        prediction = torch.where(prediction >= 0.5, torch.ones(pred.shape).to(device), torch.zeros(pred.shape).to(device)) # thresholding
     else:
-        prediction = torch.squeeze(model(input.unsqueeze(0)), dim=0).argmax(dim=0) # predict
+        prediction = model(input).argmax(dim=1) # predict
     return prediction
 
+def get_dataset_scores(data_set, model, augmented_pred=True, verbose=False):
+    """
+    compute the Jaccard, Recall, Precision and F1-score from the prediction of
+    each sample in the dataset with the passed model.
+    ------------
+    INPUT
+        |---- data_set (torch.utils.data.Dataset) the dataset to use
+        |---- model (torch.nn.Module) the model to use
+        |---- augmented_pred (bool) whether to take the average prediction over
+        |                           flip and rotations
+        |---- verbose (bool) whether to print a summary of the processing
+    OUTPUT
+        |---- scores (dict) dictionnary of scores
+    """
+    # define dataloader
+    dataloader = torch.utils.data.DataLoader(data_set, batch_size=16, shuffle=False, num_workers=4)
+    # get GPU if available
+    if cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
 
+    scores = {'jaccard':[], 'f1-score':[], 'recall':[], 'precision':[]}
+    metrics = {'jaccard':jaccard_score, 'f1-score':f1_score, 'recall':recall_score, 'precision':precision_score}
 
+    for b, (input, mask) in enumerate(dataloader):
+        input, mask = input.to(device), mask.to(device).long()
+        output = class_prediction(model, input, augmented_pred=augmented_pred, device=device)
+        # compute scores for each image separatly
+        for i in range(output.shape[0]):
+            m, o = mask[i,:,:].flatten().cpu(), output[i,:,:].flatten().cpu()
+            for name, metric in metrics.items():
+                scores[name].append(metric(m, o))
+        if verbose : print_progessbar(b, dataloader.__len__(), '|---- Batch', Size=20, end_char='\n')
+    return scores
 
+def print_progessbar(N, Max, Name='', Size=10, end_char=''):
+    """
+    Print a progress bar. To be used in a for-loop and called at each iteration
+    with the iteration number and the max number of iteration.
+    ------------
+    INPUT
+        |---- N (int) the iteration current number
+        |---- Max (int) the total number of iteration
+        |---- Name (str) an optional name for the progress bar
+        |---- Size (int) the size of the progress bar
+        |---- end_char (str) the print end parameter to used in the end of the
+        |                    of the progress bar (default is '')
+    OUTPUT
+        |---- None
+    """
+    print(f'\r{Name} {N+1:03d}/{Max:03d}'.ljust(26) \
+        + f'[{"#"*int(Size*(N+1)/Max)}'.ljust(Size+1) + f'] {(int(100*(N+1)/Max))}%'.ljust(6), \
+        end=end_char)
 
 
 

@@ -123,6 +123,68 @@ class dataset(data.Dataset):
         c_crop = np.random.randint(0,img_dim[1]-crop_size[1])
         return r_crop, c_crop
 
+class BinaryDiceLoss(nn.Module):
+    """
+    Define a Binary DiceLoss.
+    """
+    def __init__(self, smooth=1, p=2, reduction='mean'):
+        """
+        Constructor of the BinaryDiceLoss.
+        ------------
+        INPUT
+            |---- smooth (int) smooth number for the diceloss
+            |---- p (int) the power to use in the denominator
+            |---- reduction (str) how the loss should be reduced (should be one
+            |                     of : 'mean', 'sum', or 'none')
+        Output
+            |---- None
+        """
+        nn.Module.__init__(self)
+        self.smooth = smooth
+        self.reduction = reduction
+        self.p = p
+
+    def forward(self, input, target):
+        """
+        Constructor of the BinaryDiceLoss.
+        ------------
+        INPUT
+            |---- input (torch.FloatTensor) the binary input with dimension B x 2 x H x W.
+            |                          The positive class is defined by the as a
+            |                          one on the tensor.
+            |---- target (torch.FloatTensor) the binary target with dimension B x H x W.
+            |                          The positive class is defined by the as a
+            |                          one on the tensor.
+        Output
+            |---- loss (torch.FloatTensor) the Dice loss with dimension depending
+            |                              on the reduction chosen.
+        """
+        # check input
+        assert input.shape[0] == target.shape[0], 'Input and Target must have the same batch size.'
+        assert input.dim() == 4, f'Input dimension {input.shape} does not match. Should be 4D : Batch x 2 x Height x Width'
+        assert target.dim() == 3, f'Target dimension {input.shape} does not match. Should be 3D : Batch x Height x Width'
+        # convert input and target to float
+        input, target = input.float(), target.float()
+        # softmax on input and keep only the class of 1
+        input = F.softmax(input, dim=1)[:,1,:,:]
+        # linearize input and target as vector
+        input = input.contiguous().view(input.shape[0], -1)
+        target = target.contiguous().view(target.shape[0], -1)
+        # compute numerator and denominator
+        numerator = 2*(input*target).sum(dim=1) + self.smooth
+        denominator = torch.sum(input.pow(self.p) + target.pow(self.p), dim=1) + self.smooth
+        # compute the dice loss
+        loss = 1 - numerator / denominator
+        # return according to the reduction
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        elif self.reduction == 'none':
+            return loss
+        else:
+            raise Exception(f'Unexpected reduction {self.reduction}')
+
 class ResBlock(nn.Module):
     """
     Define a Residual block for the U-net. (2 3x3 convolution + BatchNorm layer
@@ -266,6 +328,34 @@ class U_net2(nn.Module):
     x = F.selu(self.convT3(x))
     x = self.RBU3.forward(torch.cat((r2, x), dim=1))
     #x = F.interpolate(x, scale_factor=2, mode='bilinear')
+    x = F.selu(self.convT4(x))
+    x = self.RBU4.forward(torch.cat((r1, x), dim=1))
+    x = F.selu(self.convFinal(x))
+    return x
+
+# Shallower
+class U_net3(nn.Module):
+  """  """
+  def __init__(self, in_channel):
+    """  """
+    nn.Module.__init__(self)
+    # Down blocks
+    self.RBD1 = ResBlock(in_channel,32)
+    self.RBD2 = ResBlock(32,64)
+
+    # Up blocks
+    self.convT4 = nn.ConvTranspose2d(64, 64, kernel_size=3, padding=1, stride=2, output_padding=1)
+    self.RBU4 = ResBlock(64+32,32)
+    self.convFinal = nn.Conv2d(32,2, kernel_size=3, padding=1)
+
+  def forward(self, x):
+    """  """
+    # dimension Batch x Channel x Width x Height
+    # down
+    r1 = self.RBD1.forward(x)
+    x = F.max_pool2d(r1, kernel_size=2, stride=2)
+    x = self.RBD2.forward(x)
+    # up
     x = F.selu(self.convT4(x))
     x = self.RBU4.forward(torch.cat((r1, x), dim=1))
     x = F.selu(self.convFinal(x))

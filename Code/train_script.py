@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
+#from torch.autograd import Variable
 import torch.cuda as cuda
 
-from sklearn.metrics import jaccard_score, accuracy_score, f1_score
+from sklearn.metrics import jaccard_score, f1_score
 from sklearn.model_selection import train_test_split
 
 import numpy as np
@@ -16,8 +16,8 @@ import pickle
 import matplotlib.pyplot as plt
 import matplotlib
 
-from learning_classes import dataset, U_net, U_net2
-from utils import print_param_summary, append_scores, load_sample_df
+from learning_classes import dataset, BinaryDiceLoss, U_net, U_net2, U_net3
+from utils import print_param_summary, append_scores, load_sample_df, get_dataset_scores, print_progessbar
 
 #%%-------------------------------------------------------------------------------------------------
 # General declaration
@@ -54,10 +54,13 @@ non_class_fraction = 0.15
 df = load_sample_df(path_to_data+'train_samples.csv', class_type=class_type, others_frac=non_class_fraction, seed=1)
 # train validation split
 train_df, val_df = train_test_split(df, train_size=train_frac, random_state=1)
+# load the test set
+test_df = load_sample_df(path_to_data+'test_samples_small.csv', class_type=class_type, others_frac=non_class_fraction, seed=1)
 
 # the train and validation datasets
 train_set = dataset(train_df, path_to_img, path_to_mask, class_position[class_type], augment=augment_data, crop_size=crop_size)
 val_set = dataset(val_df, path_to_img, path_to_mask, class_position[class_type], augment=augment_data, crop_size=crop_size)
+test_set = dataset(test_df, path_to_img, path_to_mask, class_position[class_type], augment=augment_data, crop_size=crop_size)
 
 # parameters for the dataloader , adapt batch size to ensure at least 4 batches
 train_dataloader_params = {'batch_size': min(64, int(train_set.__len__()/4)), 'shuffle': True, 'num_workers': 6}
@@ -79,15 +82,15 @@ else:
 log_train = {}
 
 # learning parameters
-n_epoch = 200
+n_epoch = 100
 nb_epochs_finished = 0
 lr = 0.0001
 
 # the loss
-criterion = nn.CrossEntropyLoss()
+loss_function = BinaryDiceLoss()#nn.CrossEntropyLoss()
 
 # initialize de model
-model = U_net2(in_channel=11)
+model = U_net3(in_channel=11)
 model = model.to(device)
 
 # the optimizer
@@ -98,7 +101,7 @@ model_name = 'Unet_' + class_type
 # save params to log
 log_train['params'] = {'device':device, 'train_dataloader_params':train_dataloader_params, \
                        'val_dataloader_params':val_dataloader_params, \
-                       'n_epoch':n_epoch, 'lr':lr, 'loss_function':str(criterion), \
+                       'n_epoch':n_epoch, 'lr':lr, 'loss_function':str(loss_function), \
                        'optimizer':str(optimizer), 'class':class_type, 'data_augmentation':augment_data, \
                        'train size':train_df.shape[0], 'validation size':val_df.shape[0], \
                        'non_class_fraction':non_class_fraction, \
@@ -110,7 +113,7 @@ print_param_summary(**log_train['params'])
 
 #%%-------------------------------------------------------------------------------------------------
 # Training procedure
-print('_'*80+'\nTraining\n'+'_'*80)
+print('-'*100+'\n'+'Training'.center(100)+'\n'+'-'*100)
 # load model from checkpoint if any
 checkpoint_name = path_to_output+model_name+'_checkpoint.pth'
 try:
@@ -125,28 +128,28 @@ except FileNotFoundError:
 except:
     print('Error when loading the checkpoint.')
     exit(1)
-
-# initial print
-pads = [8,14,25,25]
-print('-'*(sum(pads)+1))
-print('| Epoch'.ljust(pads[0]) + '| Sum loss'.ljust(pads[1]) + '| Validation Jaccard'.ljust(pads[2]) + '| Validation F1'.ljust(pads[3])+'|')
-print('-'*(sum(pads)+1))
+print('-'*100)
 
 # train
+best_F1 = 0.0
 for epoch in range(nb_epochs_finished, n_epoch):
+    print(f'|- Epoch {epoch+1:02d}/{n_epoch:02d}'.ljust(16))
     sum_loss = 0.0
     jaccard_train = []
     jaccard_val = []
     f1_train = []
     f1_val = []
 
-    for train_data, train_label in train_dataloader:
+    for b, (train_data, train_label) in enumerate(train_dataloader):
+        # Enable autograd
+        train_data.requires_grad = True
+        train_label.requires_grad = True
         # Transfer to GPU if available
-        train_data, train_label = train_data.to(device), train_label.to(device).long()
+        train_data, train_label = train_data.to(device), train_label.to(device)
         # forward pass
         output = model(train_data)
         # compute the loss
-        loss = criterion(output, train_label) # Output B x C x H x W ; Target B x H x W
+        loss = loss_function(output, train_label) # Output B x 2 x H x W ; Target B x H x W
         sum_loss += loss.item()
         #reset gardient
         optimizer.zero_grad()
@@ -156,27 +159,33 @@ for epoch in range(nb_epochs_finished, n_epoch):
         optimizer.step()
         # compute train scores
         with torch.set_grad_enabled(False):
-            jaccard_train.append(jaccard_score(train_label.flatten().cpu(), output.argmax(dim=1).flatten().cpu()))
-            f1_train.append(f1_score(train_label.flatten().cpu(), output.argmax(dim=1).flatten().cpu()))
+            l, o = train_label.long().flatten().cpu(), output.argmax(dim=1).flatten().cpu()
+            jaccard_train.append(jaccard_score(l, o))
+            f1_train.append(f1_score(l, o))
+        # print the progress bar
+        print_progessbar(b, train_dataloader.__len__(), Name='|--- Train', Size=20)
+    # print the train loss
+    print(f' | Loss {sum_loss:.3f}')
 
     # compute validation scores
     with torch.set_grad_enabled(False):
-        for val_data, val_label in val_dataloader:
-            val_data, val_label = val_data.to(device), val_label.to(device).long()
+        for b, (val_data, val_label) in enumerate(val_dataloader):
+            val_data, val_label = val_data.to(device), val_label.to(device)
             val_pred = model(val_data).argmax(dim=1)
-            jaccard_val.append(jaccard_score(val_label.flatten().cpu(), val_pred.flatten().cpu()))
-            f1_val.append(f1_score(val_label.flatten().cpu(), val_pred.flatten().cpu()))
+            l, o = val_label.long().flatten().cpu(), val_pred.flatten().cpu()
+            jaccard_val.append(jaccard_score(l, o))
+            f1_val.append(f1_score(l, o))
+            # print the progress bar
+            print_progessbar(b, val_dataloader.__len__(), Name='|--- Validation', Size=20)
 
     # append values to log
     append_scores(log_train, epoch=epoch+1, loss=sum_loss, \
                              jaccard_train=jaccard_train, jaccard_val=jaccard_val, \
                              f1_train=f1_train, f1_val=f1_val)
-    # print epoch summary
-    print(f'| {epoch+1:03d}'.ljust(pads[0]) + \
-          f'| {sum_loss:.2f}'.ljust(pads[1]) + \
-          f'| {log_train["jaccard_val"]["mean"][-1]:.2%}'.ljust(pads[2]) + \
-          f'| {log_train["f1_val"]["mean"][-1]:.2%}'.ljust(pads[3])+'|')
-    print('-'*(sum(pads)+1))
+    # print validations' scores
+    print(f' | Jaccard {log_train["jaccard_val"]["mean"][-1]:.2%}'.ljust(15) + \
+          f' | F1-score {log_train["f1_val"]["mean"][-1]:.2%}'.ljust(15))
+    print('-'*100)
 
     # save the current model state as checkpoint
     checkpoint = {'nb_epochs_finished': epoch+1, \
@@ -184,6 +193,15 @@ for epoch in range(nb_epochs_finished, n_epoch):
                   'optimizer_state': optimizer.state_dict(), \
                   'log_train':log_train}
     torch.save(checkpoint, checkpoint_name)
+
+    # save the model state if better F1-score
+    if best_F1 < log_train["f1_val"]["mean"][-1]:
+        best_model = {'nb_epochs': epoch+1, \
+                      'model_state': model.state_dict(), \
+                      'F1_score': log_train["f1_val"]["mean"][-1], \
+                      'Jaccard':log_train["f1_val"]["mean"][-1]}
+        torch.save(best_model, path_to_output+model_name+'_best.pickle')
+        best_F1 = log_train["f1_val"]["mean"][-1]
 
 # Save the log of training
 with open(path_to_output+model_name+'_log_train.pickle', 'wb') as handle:
@@ -193,3 +211,26 @@ print('\n>>> LOG saved on disk at'+path_to_output+model_name+'_log_train.pickle'
 # Save trained model state dict
 torch.save(model.state_dict(), path_to_output+model_name+'_trained.pt')
 print('\n>>> Trained model saved on disk at'+path_to_output+model_name+'_trained.pt')
+
+#%%-------------------------------------------------------------------------------------------------
+# Get the scores for the train, valdation and test dataset
+
+# Loading the best model
+best_model_param = torch.load(path_to_output+model_name+'_best.pickle')
+model.load_state_dict(best_model_param['model_state'])
+print(f'>>> Best Model loaded from epoch {best_model_param['nb_epochs']}\n')
+
+# Compute the scores
+datasets = {'train':train_set, 'validation':val_set, 'test':test_set}
+all_scores = {}
+
+print('-'*100+'\n'+'Computing Scores'.center(100)+'\n'+'-'*100)
+with torch.set_grad_enabled(False):
+    for name, data_set in datasets.item():
+        print('|-- ' + name)
+        all_scores[name] = get_dataset_scores(data_set, model, augmented_pred=True, verbose=True)
+
+# save the scores
+with open(path_to_output+model_name+'_scores.pickle', 'wb') as handle:
+    pickle.dump(all_scores, handle, protocol=pickle.HIGHEST_PROTOCOL)
+print('\n>>> Scores saved on disk at'+path_to_output+model_name+'_scores.pickle')
