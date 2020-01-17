@@ -52,8 +52,17 @@ df_test = get_samples(id_test, \
                        class_offset_test, class_area_test, \
                        verbose=True)
 
+# the test set cut similarly to the train for performance estimations
+df_test_small = get_samples(id_test, \
+                       path_to_img, path_to_mask, \
+                       crop_size_train, overlap_train, \
+                       order_dict, \
+                       class_offset_train, class_area_train, \
+                       verbose=True)
+
 df_train.to_csv(path_to_data+'train_samples.csv')
 df_test.to_csv(path_to_data+'test_samples.csv')
+df_test_small.to_csv(path_to_data+'test_samples_small.csv')
 
 # -----------------------------------------------------------------------------------------
 #%%
