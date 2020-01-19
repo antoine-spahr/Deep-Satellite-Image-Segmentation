@@ -45,10 +45,12 @@ for i, img_id in enumerate(img_id_list):
 
 # %% plot masks
 fig, axs = plt.subplots(5,5,figsize=(20,20))
+fig.patch.set_alpha(0)
 for (id, mask), ax in zip(masks.items(), axs.reshape(-1)):
     plot_masks(ax, mask, order_dict, color_dict, zorder_dict, legend=False)
     ax.set_title(id, fontsize=14)
-    ax.set_axis_off()
+    ax.tick_params(axis='both', which='both',bottom=False, top=False,\
+                   labelbottom=False, right=False, left=False, labelleft=False)
 
 handles = [matplotlib.patches.Patch(facecolor=pcol) for pcol in color_dict.values()]
 labels = list(color_dict.keys())

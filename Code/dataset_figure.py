@@ -21,6 +21,7 @@ df = pd.read_csv(path_to_data+'train_samples.csv', index_col=0, converters={'cla
 # %% plot
 N_img = 6
 fig, axs = plt.subplots(8,N_img,figsize=(N_img*3,8*3+2), gridspec_kw={'wspace':0.05, 'hspace':0.2})
+fig.patch.set_alpha(0)
 
 for i, (class_name, class_pos) in enumerate(class_position.items()):
     # creat dataset
@@ -29,7 +30,7 @@ for i, (class_name, class_pos) in enumerate(class_position.items()):
     # draw group rectangles
     pos = axs[i,0].get_position()
     fig.patches.extend([plt.Rectangle((pos.x0-0.06,pos.y0-0.05*pos.height), pos.width*1.125*N_img , pos.height*1.1,
-                                       facecolor='lightgray', ec='black', alpha=0.5, zorder=-1,
+                                       facecolor='whitesmoke', ec='black', alpha=1, zorder=-1,
                                        transform=fig.transFigure, figure=fig)])
     fig.text(pos.x0-0.03, pos.y0+0.5*pos.height, class_name.title(), rotation=90, rotation_mode='anchor', \
              fontweight='bold', fontsize=14, ha='center', va='center')

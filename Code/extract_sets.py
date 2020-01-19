@@ -70,6 +70,7 @@ subimg = load_image_part((0,0), (5*80,8*80), path_to_img+id_train[2]+'.tif')
 crops = get_crops_grid(subimg.shape[1], subimg.shape[2], crop_size_train, overlap_train)
 #%%
 fig, ax = plt.subplots(1,1,figsize=(10,7))
+#fig.patch.set_alpha(0)
 ax.imshow(np.moveaxis(subimg[[4,2,1], :, :], 0, 2))
 ax.set_axis_off()
 ax.set_title('train sample generation example', fontsize=12)
@@ -92,4 +93,4 @@ def animate(c):
     return [P1,P2]
 
 anim = matplotlib.animation.FuncAnimation(fig, animate, init_func=init, frames=crops, interval=500, blit=True)
-anim.save('../Figures/train_samples.gif', writer='imagemagick', dpi=100)
+anim.save('../Figures/train_samples.gif', writer='imagemagick', dpi=150)
